@@ -34,7 +34,7 @@ main_kb = ReplyKeyboardMarkup(
 @dp.message(Command("start"))
 async def start(message: types.Message):
     await message.answer(
-        "Вас приветствует Бот калькулятор! Выберите команду из меню или введите модель и цену через пробел - Пр: AUDI 5000",
+        "Вас приветствует Бот калькулятор! Выберите команду из меню или введите модель и цену через пробел: n\Например: AUDI 5000",
         reply_markup=main_kb
     )
 
@@ -52,9 +52,16 @@ async def calc_cmd(message: types.Message):
 @dp.message()
 async def calc(message: types.Message):
     try:
-        model, price = message.text.split()
-        price = float(price)
+        parts = message.text.split()
+        if len(parts) < 2:
+            raise ValueError("Недостаточно аргументов")
+
+        # всё кроме последнего слова — модель
+        model = " ".join(parts[:-1])
+        price = float(parts[-1])
+
         customs, logistics, commission, total = calc_total(price)
+
         await message.answer(
             f"🚗 Модель: {model}\n"
             f"• Базовая цена: ${price:,.0f}\n"
@@ -62,11 +69,10 @@ async def calc(message: types.Message):
             f"• Логистика: ${logistics:,.0f}\n"
             f"• Комиссия: ${commission:,.0f}\n"
             f"--------------------\n"
-            f"✅ Итого: ${total:,.0f}",
-            reply_markup=main_kb
+            f"✅ Итого: ${total:,.0f}"
         )
-    except:
-        await message.answer("Ошибка ввода. Используй формат: Модель Цена", reply_markup=main_kb)
+    except Exception:
+        await message.answer("Ошибка ввода. Используй формат: Модель Цена\nНапример: Audi A5 3000")
 
 # --- Установка меню команд ---
 async def set_commands(bot: Bot):
