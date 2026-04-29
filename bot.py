@@ -5,7 +5,7 @@ from fastapi import FastAPI
 import uvicorn
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
-from aiogram.types import BotCommand
+from aiogram.types import BotCommand, ReplyKeyboardMarkup, KeyboardButton
 
 # Токен берём из переменной окружения
 API_TOKEN = os.environ.get("API_TOKEN")
@@ -21,17 +21,33 @@ def calc_total(price: float):
     total = price + customs + logistics + commission
     return customs, logistics, commission, total
 
+# --- Клавиатура ---
+main_kb = ReplyKeyboardMarkup(
+    keyboard=[
+        [KeyboardButton(text="/calc")],
+        [KeyboardButton(text="/help")],
+    ],
+    resize_keyboard=True,
+    one_time_keyboard=False
+)
+
 @dp.message(Command("start"))
 async def start(message: types.Message):
-    await message.answer("Привет! Введи модель и стоимость авто через пробел.\nНапример: BMW 20000")
+    await message.answer(
+        "Вас приветствует Бот калькулятор! Выберите команду из меню или введите модель и цену через пробел - Пр: AUDI 5000",
+        reply_markup=main_kb
+    )
 
 @dp.message(Command("help"))
 async def help_cmd(message: types.Message):
-    await message.answer("Доступные команды:\n/start — начать работу\n/help — справка\n/calc — рассчитать стоимость")
+    await message.answer(
+        "Доступные команды:\n/start — начать работу\n/help — справка\n/calc — рассчитать стоимость",
+        reply_markup=main_kb
+    )
 
 @dp.message(Command("calc"))
 async def calc_cmd(message: types.Message):
-    await message.answer("Введите модель и цену через пробел, например: Audi 25000")
+    await message.answer("Введите модель и цену через пробел, например: Audi 25000", reply_markup=main_kb)
 
 @dp.message()
 async def calc(message: types.Message):
@@ -46,10 +62,11 @@ async def calc(message: types.Message):
             f"• Логистика: ${logistics:,.0f}\n"
             f"• Комиссия: ${commission:,.0f}\n"
             f"--------------------\n"
-            f"✅ Итого: ${total:,.0f}"
+            f"✅ Итого: ${total:,.0f}",
+            reply_markup=main_kb
         )
     except:
-        await message.answer("Ошибка ввода. Используй формат: Модель Цена")
+        await message.answer("Ошибка ввода. Используй формат: Модель Цена", reply_markup=main_kb)
 
 # --- Установка меню команд ---
 async def set_commands(bot: Bot):
