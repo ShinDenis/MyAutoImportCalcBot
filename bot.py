@@ -43,8 +43,8 @@ async def start(message: types.Message):
     await message.answer(
         """Вас приветствует Бот калькулятор!
 
-Выберите команду из меню или введите модель и цену через пробел.
-Например: AUDI 5000""",
+        Выберите команду из меню или введите модель и цену через пробел.
+        Например: AUDI 5000""",
         reply_markup=main_kb
     )
 
@@ -62,7 +62,7 @@ async def help_cmd(message: types.Message):
 async def calc_cmd(message: types.Message):
     await message.answer(
         """Введите модель и цену через пробел.
-Например: Audi A5 3000""",
+        Например: Audi A5 3000""",
         reply_markup=main_kb
     )
 
