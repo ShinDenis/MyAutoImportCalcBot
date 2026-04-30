@@ -1,28 +1,41 @@
 import os
 import asyncio
+import logging
 from threading import Thread
 from fastapi import FastAPI
 import uvicorn
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
 from aiogram.types import BotCommand, ReplyKeyboardMarkup, KeyboardButton
-import google.genai as genai   # новый пакет вместо google.generativeai
+from google import genai
+
+# --- Логирование ---
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s"
+)
+logger = logging.getLogger(__name__)
 
 # --- Настройки ---
 API_TOKEN = os.environ.get("API_TOKEN")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 
+if not API_TOKEN:
+    raise RuntimeError("Переменная окружения API_TOKEN не задана!")
+if not GEMINI_API_KEY:
+    raise RuntimeError("Переменная окружения GEMINI_API_KEY не задана!")
+
 bot = Bot(token=API_TOKEN)
 dp = Dispatcher()
 
-# Настройка Gemini
+# --- Настройка Gemini ---
 client = genai.Client(api_key=GEMINI_API_KEY)
 
 # --- Логика калькулятора ---
 def calc_total(price: float):
-    customs = price * 0.15
-    logistics = 1000
-    commission = price * 0.05
+    customs = price * 0.15      # таможня 15%
+    logistics = 1000            # логистика фиксированная, USD
+    commission = price * 0.05  # комиссия 5%
     total = price + customs + logistics + commission
     return customs, logistics, commission, total
 
@@ -67,37 +80,68 @@ async def calc_cmd(message: types.Message):
 @dp.message()
 async def calc(message: types.Message):
     try:
-        parts = message.text.split()
-        if len(parts) < 2:
-            raise ValueError("Недостаточно аргументов")
+        text = message.text.strip()
+        parts = text.split()
 
-        model = " ".join(parts[:-1])
-        price = float(parts[-1])
+        if len(parts) < 2:
+            await message.answer(
+                "Введите модель и цену через пробел.\nНапример: Audi A5 3000",
+                reply_markup=main_kb
+            )
+            return
+
+        # Последнее слово — цена, всё остальное — модель
+        price_str = parts[-1]
+        model_name = " ".join(parts[:-1])
+
+        try:
+            price = float(price_str)
+        except ValueError:
+            await message.answer(
+                f"Цена должна быть числом, получено: «{price_str}»\nНапример: Audi A5 3000",
+                reply_markup=main_kb
+            )
+            return
+
+        if price <= 0:
+            await message.answer(
+                "Цена должна быть положительным числом.",
+                reply_markup=main_kb
+            )
+            return
+
         customs, logistics, commission, total = calc_total(price)
 
-        # --- Генерация ответа через Gemini ---
-        prompt = f"""
-        Пользователь ввёл: {model} {price}.
-        Расчёт:
-        - Таможня: {customs}
-        - Логистика: {logistics}
-        - Комиссия: {commission}
-        - Итого: {total}
+        logger.info(f"Запрос: {model_name} | цена={price}")
 
-        Сформулируй дружелюбный ответ на русском языке, добавь немного эмоций и эмодзи.
-        """
+        # --- Генерация ответа через Gemini ---
+        prompt = (
+            f"Пользователь хочет купить автомобиль: {model_name}, цена {price} USD.\n"
+            f"Расчёт итоговой стоимости:\n"
+            f"- Таможня (15%): {customs:.2f} USD\n"
+            f"- Логистика: {logistics:.2f} USD\n"
+            f"- Комиссия (5%): {commission:.2f} USD\n"
+            f"- Итого: {total:.2f} USD\n\n"
+            f"Сформулируй дружелюбный, короткий ответ на русском языке с эмодзи."
+        )
 
         response = client.models.generate_content(
             model="gemini-2.0-flash",
-            contents=[{"role": "user", "parts": [prompt]}]
+            contents=[
+                {
+                    "role": "user",
+                    "parts": [{"text": prompt}]
+                }
+            ]
         )
-        response_text = response.text
 
+        response_text = response.text
         await message.answer(response_text, reply_markup=main_kb)
 
-    except Exception:
+    except Exception as e:
+        logger.error(f"Ошибка в calc(): {type(e).__name__}: {e}", exc_info=True)
         await message.answer(
-            "Ошибка ввода. Используй формат: Модель Цена\nНапример: Audi A5 3000",
+            f"Произошла ошибка: {type(e).__name__}: {e}",
             reply_markup=main_kb
         )
 
@@ -119,12 +163,14 @@ def home():
 
 @app.get("/calc/{price}")
 def api_calc(price: float):
+    if price <= 0:
+        return {"error": "Цена должна быть положительной"}
     customs, logistics, commission, total = calc_total(price)
     return {
-        "customs": customs,
-        "logistics": logistics,
-        "commission": commission,
-        "total": total
+        "customs": round(customs, 2),
+        "logistics": round(logistics, 2),
+        "commission": round(commission, 2),
+        "total": round(total, 2)
     }
 
 def run_api():
@@ -137,7 +183,7 @@ async def run_bot():
     await dp.start_polling(bot)
 
 def main():
-    Thread(target=run_api).start()
+    Thread(target=run_api, daemon=True).start()
     asyncio.run(run_bot())
 
 if __name__ == "__main__":
