@@ -85,10 +85,20 @@ async def calc(message: types.Message):
         - Логистика: {logistics}
         - Комиссия: {commission}
         - Итого: {total}
-
-        Сформулируй дружелюбный ответ на русском языке, добавь немного эмоций.
+        
+        Сформулируй ответ на русском языке:
+        - дружелюбный, как будто ты друг
+        - добавь немного эмоций и эмодзи
+        - не просто перечисли цифры, а обыграй их
         """
-        response = gemini_model.generate_content(prompt)
+
+        response = gemini_model.generate_content(
+        [
+            {"role": "system", "content": "Ты дружелюбный помощник, который отвечает живо, с лёгким юмором и эмоциями."},
+            {"role": "user", "content": prompt}
+        ]
+    )
+
         response_text = response.text
 
         await message.answer(response_text, reply_markup=main_kb)
