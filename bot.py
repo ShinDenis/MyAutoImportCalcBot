@@ -88,7 +88,7 @@ async def calc(message: types.Message):
         """
 
         response = client.models.generate_content(
-            model="gemini-1.5-flash",
+            model="gemini-2.0-flash",
             contents=[{"role": "user", "parts": [prompt]}]
         )
         response_text = response.text
