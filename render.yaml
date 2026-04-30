@@ -5,4 +5,4 @@ services:
     plan: free
     buildCommand: "pip install --upgrade pip && pip install -r requirements.txt"
     startCommand: "python bot.py"
-    pythonVersion: 3.10.14
+    pythonVersion: "3.10.14"
