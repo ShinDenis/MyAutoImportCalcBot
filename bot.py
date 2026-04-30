@@ -6,7 +6,7 @@ import uvicorn
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
 from aiogram.types import BotCommand, ReplyKeyboardMarkup, KeyboardButton
-import google.generativeai as genai
+import google.genai as genai   # новый пакет вместо google.generativeai
 
 # --- Настройки ---
 API_TOKEN = os.environ.get("API_TOKEN")
@@ -16,8 +16,7 @@ bot = Bot(token=API_TOKEN)
 dp = Dispatcher()
 
 # Настройка Gemini
-genai.configure(api_key=GEMINI_API_KEY)
-gemini_model = genai.GenerativeModel("gemini-1.5-flash")
+client = genai.Client(api_key=GEMINI_API_KEY)
 
 # --- Логика калькулятора ---
 def calc_total(price: float):
@@ -41,28 +40,27 @@ main_kb = ReplyKeyboardMarkup(
 @dp.message(Command("start"))
 async def start(message: types.Message):
     await message.answer(
-        """Вас приветствует Бот калькулятор!
-
-        Выберите команду из меню или введите модель и цену через пробел.
-        Например: AUDI 5000""",
+        "Вас приветствует Бот калькулятор!\n\n"
+        "Выберите команду из меню или введите модель и цену через пробел.\n"
+        "Например: AUDI 5000",
         reply_markup=main_kb
     )
 
 @dp.message(Command("help"))
 async def help_cmd(message: types.Message):
     await message.answer(
-        """Доступные команды:
-/start — начать работу
-/help — справка
-/calc — рассчитать стоимость""",
+        "Доступные команды:\n"
+        "/start — начать работу\n"
+        "/help — справка\n"
+        "/calc — рассчитать стоимость",
         reply_markup=main_kb
     )
 
 @dp.message(Command("calc"))
 async def calc_cmd(message: types.Message):
     await message.answer(
-        """Введите модель и цену через пробел.
-        Например: Audi A5 3000""",
+        "Введите модель и цену через пробел.\n"
+        "Например: Audi A5 3000",
         reply_markup=main_kb
     )
 
@@ -85,20 +83,14 @@ async def calc(message: types.Message):
         - Логистика: {logistics}
         - Комиссия: {commission}
         - Итого: {total}
-        
-        Сформулируй ответ на русском языке:
-        - дружелюбный, как будто ты друг
-        - добавь немного эмоций и эмодзи
-        - не просто перечисли цифры, а обыграй их
+
+        Сформулируй дружелюбный ответ на русском языке, добавь немного эмоций и эмодзи.
         """
 
-        response = gemini_model.generate_content(
-        [
-            {"role": "system", "content": "Ты дружелюбный помощник, который отвечает живо, с лёгким юмором и эмоциями."},
-            {"role": "user", "content": prompt}
-        ]
-    )
-
+        response = client.models.generate_content(
+            model="gemini-1.5-flash",
+            contents=[{"role": "user", "parts": [prompt]}]
+        )
         response_text = response.text
 
         await message.answer(response_text, reply_markup=main_kb)
