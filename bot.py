@@ -4,6 +4,7 @@ import logging
 from threading import Thread
 from fastapi import FastAPI
 import uvicorn
+import httpx
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
 from aiogram.types import BotCommand, ReplyKeyboardMarkup, KeyboardButton
@@ -19,6 +20,7 @@ logger = logging.getLogger(__name__)
 # --- Настройки ---
 API_TOKEN = os.environ.get("API_TOKEN")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
+RENDER_EXTERNAL_URL = os.environ.get("RENDER_EXTERNAL_URL", "http://localhost:8000")
 
 if not API_TOKEN:
     raise RuntimeError("Переменная окружения API_TOKEN не задана!")
@@ -30,12 +32,13 @@ dp = Dispatcher()
 
 # --- Настройка Gemini ---
 client = genai.Client(api_key=GEMINI_API_KEY)
+GEMINI_MODEL = "gemini-2.5-flash"
 
 # --- Логика калькулятора ---
 def calc_total(price: float):
     customs = price * 0.15      # таможня 15%
-    logistics = 1000            # логистика фиксированная, USD
-    commission = price * 0.05  # комиссия 5%
+    logistics = 1000.0          # логистика фиксированная, USD
+    commission = price * 0.05   # комиссия 5%
     total = price + customs + logistics + commission
     return customs, logistics, commission, total
 
@@ -49,13 +52,24 @@ main_kb = ReplyKeyboardMarkup(
     one_time_keyboard=False
 )
 
+# --- Keep-alive пинг чтобы Render не усыплял сервис ---
+async def keep_alive():
+    async with httpx.AsyncClient() as http:
+        while True:
+            await asyncio.sleep(600)  # каждые 10 минут
+            try:
+                await http.get(f"{RENDER_EXTERNAL_URL}/")
+                logger.info("Keep-alive ping отправлен")
+            except Exception as e:
+                logger.warning(f"Keep-alive ошибка: {e}")
+
 # --- Хэндлеры ---
 @dp.message(Command("start"))
 async def start(message: types.Message):
     await message.answer(
         "Вас приветствует Бот калькулятор!\n\n"
-        "Выберите команду из меню или введите модель и цену через пробел.\n"
-        "Например: AUDI 5000",
+        "Введите модель и цену через пробел.\n"
+        "Например: Audi A5 3000",
         reply_markup=main_kb
     )
 
@@ -90,7 +104,6 @@ async def calc(message: types.Message):
             )
             return
 
-        # Последнее слово — цена, всё остальное — модель
         price_str = parts[-1]
         model_name = " ".join(parts[:-1])
 
@@ -111,36 +124,64 @@ async def calc(message: types.Message):
             return
 
         customs, logistics, commission, total = calc_total(price)
-
         logger.info(f"Запрос: {model_name} | цена={price}")
 
-        # --- Генерация ответа через Gemini ---
         prompt = (
-        f"Пользователь хочет купить автомобиль: {model_name}, цена {price:.2f} USD.\n\n"
-        f"Расчёт итоговой стоимости:\n"
-        f"- Цена авто: {price:.2f} USD\n"
-        f"- Таможня (15%): {customs:.2f} USD\n"
-        f"- Логистика: {logistics:.2f} USD\n"
-        f"- Комиссия (5%): {commission:.2f} USD\n"
-        f"- Итого: {total:.2f} USD\n\n"
-        f"Напиши дружелюбный ответ на русском языке с эмодзи. "
-        f"ОБЯЗАТЕЛЬНО включи все 5 строк расчёта в ответ в том же порядке: "
-        f"цена авто, таможня, логистика, комиссия, итого. "
-        f"Не сокращай и не объединяй строки расчёта."
+            f"Пользователь хочет купить автомобиль: {model_name}, цена {price:.2f} USD.\n\n"
+            f"Расчёт итоговой стоимости:\n"
+            f"- Цена авто: {price:.2f} USD\n"
+            f"- Таможня (15%): {customs:.2f} USD\n"
+            f"- Логистика: {logistics:.2f} USD\n"
+            f"- Комиссия (5%): {commission:.2f} USD\n"
+            f"- Итого: {total:.2f} USD\n\n"
+            f"Напиши дружелюбный ответ на русском языке с эмодзи. "
+            f"ОБЯЗАТЕЛЬНО включи все 5 строк расчёта в ответ в том же порядке: "
+            f"цена авто, таможня, логистика, комиссия, итого. "
+            f"Не сокращай и не объединяй строки расчёта."
         )
 
-        response = client.models.generate_content(
-            model="gemini-2.5-flash-lite",
-            contents=[
-                {
-                    "role": "user",
-                    "parts": [{"text": prompt}]
-                }
-            ]
-        )
+        # --- Gemini с retry ---
+        MAX_RETRIES = 3
+        response_text = None
 
-        response_text = response.text
-        await message.answer(response_text, reply_markup=main_kb)
+        for attempt in range(MAX_RETRIES):
+            try:
+                response = client.models.generate_content(
+                    model=GEMINI_MODEL,
+                    contents=[{"role": "user", "parts": [{"text": prompt}]}]
+                )
+                response_text = response.text
+                break
+
+            except Exception as e:
+                error_str = str(e)
+                is_503 = "503" in error_str or "UNAVAILABLE" in error_str
+                is_429 = "429" in error_str or "RESOURCE_EXHAUSTED" in error_str
+
+                if (is_503 or is_429) and attempt < MAX_RETRIES - 1:
+                    wait = (attempt + 1) * 5  # 5s, 10s, 15s
+                    logger.warning(f"Gemini {type(e).__name__} (попытка {attempt+1}), жду {wait}с...")
+                    await asyncio.sleep(wait)
+                    continue
+
+                logger.warning(f"Gemini недоступен после {attempt+1} попыток: {e}")
+                response_text = None
+                break
+
+        # --- Fallback если Gemini не ответил ---
+        if response_text is None:
+            response_text = (
+                f"🚗 <b>{model_name}</b>\n\n"
+                f"💰 Цена авто: {price:.2f} USD\n"
+                f"🛃 Таможня (15%): {customs:.2f} USD\n"
+                f"🚚 Логистика: {logistics:.2f} USD\n"
+                f"💼 Комиссия (5%): {commission:.2f} USD\n"
+                f"━━━━━━━━━━━━━━\n"
+                f"✅ <b>Итого: {total:.2f} USD</b>"
+            )
+            await message.answer(response_text, parse_mode="HTML", reply_markup=main_kb)
+        else:
+            await message.answer(response_text, reply_markup=main_kb)
 
     except Exception as e:
         logger.error(f"Ошибка в calc(): {type(e).__name__}: {e}", exc_info=True)
@@ -184,7 +225,9 @@ def run_api():
 # --- Запуск бота ---
 async def run_bot():
     await set_commands(bot)
-    await dp.start_polling(bot)
+    asyncio.create_task(keep_alive())
+    dp.shutdown.register(lambda: bot.session.close())
+    await dp.start_polling(bot, drop_pending_updates=True)
 
 def main():
     Thread(target=run_api, daemon=True).start()
