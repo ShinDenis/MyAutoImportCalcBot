@@ -5,9 +5,11 @@ from threading import Thread
 from fastapi import FastAPI
 import uvicorn
 import httpx
-from aiogram import Bot, Dispatcher, types
+from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
-from aiogram.types import BotCommand, ReplyKeyboardMarkup, KeyboardButton
+from aiogram.types import (
+    BotCommand, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
+)
 from google import genai
 
 # --- Логирование ---
@@ -42,55 +44,109 @@ def calc_total(price: float):
     total = price + customs + logistics + commission
     return customs, logistics, commission, total
 
-# --- Клавиатура ---
-main_kb = ReplyKeyboardMarkup(
-    keyboard=[
-        [KeyboardButton(text="/calc")],
-        [KeyboardButton(text="/help")],
-    ],
-    resize_keyboard=True,
-    one_time_keyboard=False
-)
+# --- Inline клавиатуры ---
+def main_menu_kb():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🚗 Рассчитать стоимость", callback_data="calc")],
+        [InlineKeyboardButton(text="❓ Помощь", callback_data="help")],
+    ])
+
+def after_calc_kb():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔄 Рассчитать ещё", callback_data="calc")],
+        [InlineKeyboardButton(text="🏠 Главное меню", callback_data="start")],
+    ])
+
+def back_kb():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🏠 Главное меню", callback_data="start")],
+    ])
 
 # --- Keep-alive пинг чтобы Render не усыплял сервис ---
 async def keep_alive():
     async with httpx.AsyncClient() as http:
         while True:
-            await asyncio.sleep(600)  # каждые 10 минут
+            await asyncio.sleep(600)
             try:
                 await http.get(f"{RENDER_EXTERNAL_URL}/")
                 logger.info("Keep-alive ping отправлен")
             except Exception as e:
                 logger.warning(f"Keep-alive ошибка: {e}")
 
-# --- Хэндлеры ---
+# --- Хэндлеры команд ---
 @dp.message(Command("start"))
 async def start(message: types.Message):
     await message.answer(
-        "Вас приветствует Бот калькулятор!\n\n"
-        "Введите модель и цену через пробел.\n"
-        "Например: Audi A5 3000",
-        reply_markup=main_kb
+        "👋 Вас приветствует <b>Бот калькулятор</b>!\n\n"
+        "Рассчитаю полную стоимость авто с учётом таможни, логистики и комиссии.\n\n"
+        "Выберите действие:",
+        parse_mode="HTML",
+        reply_markup=main_menu_kb()
     )
 
 @dp.message(Command("help"))
 async def help_cmd(message: types.Message):
     await message.answer(
-        "Доступные команды:\n"
-        "/start — начать работу\n"
-        "/help — справка\n"
-        "/calc — рассчитать стоимость",
-        reply_markup=main_kb
+        "ℹ️ <b>Как пользоваться ботом:</b>\n\n"
+        "Нажмите <b>Рассчитать стоимость</b> и введите:\n"
+        "<code>Модель Цена</code>\n\n"
+        "Например: <code>Audi A5 3000</code>\n\n"
+        "<b>Что входит в расчёт:</b>\n"
+        "🛃 Таможня — 15% от цены\n"
+        "🚚 Логистика — 1000 USD\n"
+        "💼 Комиссия — 5% от цены",
+        parse_mode="HTML",
+        reply_markup=back_kb()
     )
 
 @dp.message(Command("calc"))
 async def calc_cmd(message: types.Message):
     await message.answer(
-        "Введите модель и цену через пробел.\n"
-        "Например: Audi A5 3000",
-        reply_markup=main_kb
+        "✏️ Введите модель и цену через пробел.\n"
+        "Например: <code>Audi A5 3000</code>",
+        parse_mode="HTML",
+        reply_markup=back_kb()
     )
 
+# --- Callback хэндлеры (нажатия на кнопки) ---
+@dp.callback_query(F.data == "start")
+async def cb_start(call: CallbackQuery):
+    await call.message.edit_text(
+        "👋 Вас приветствует <b>Бот калькулятор</b>!\n\n"
+        "Рассчитаю полную стоимость авто с учётом таможни, логистики и комиссии.\n\n"
+        "Выберите действие:",
+        parse_mode="HTML",
+        reply_markup=main_menu_kb()
+    )
+    await call.answer()
+
+@dp.callback_query(F.data == "help")
+async def cb_help(call: CallbackQuery):
+    await call.message.edit_text(
+        "ℹ️ <b>Как пользоваться ботом:</b>\n\n"
+        "Нажмите <b>Рассчитать стоимость</b> и введите:\n"
+        "<code>Модель Цена</code>\n\n"
+        "Например: <code>Audi A5 3000</code>\n\n"
+        "<b>Что входит в расчёт:</b>\n"
+        "🛃 Таможня — 15% от цены\n"
+        "🚚 Логистика — 1000 USD\n"
+        "💼 Комиссия — 5% от цены",
+        parse_mode="HTML",
+        reply_markup=back_kb()
+    )
+    await call.answer()
+
+@dp.callback_query(F.data == "calc")
+async def cb_calc(call: CallbackQuery):
+    await call.message.edit_text(
+        "✏️ Введите модель и цену через пробел.\n"
+        "Например: <code>Audi A5 3000</code>",
+        parse_mode="HTML",
+        reply_markup=back_kb()
+    )
+    await call.answer()
+
+# --- Основной хэндлер расчёта ---
 @dp.message()
 async def calc(message: types.Message):
     try:
@@ -99,8 +155,10 @@ async def calc(message: types.Message):
 
         if len(parts) < 2:
             await message.answer(
-                "Введите модель и цену через пробел.\nНапример: Audi A5 3000",
-                reply_markup=main_kb
+                "⚠️ Введите модель и цену через пробел.\n"
+                "Например: <code>Audi A5 3000</code>",
+                parse_mode="HTML",
+                reply_markup=back_kb()
             )
             return
 
@@ -111,15 +169,18 @@ async def calc(message: types.Message):
             price = float(price_str)
         except ValueError:
             await message.answer(
-                f"Цена должна быть числом, получено: «{price_str}»\nНапример: Audi A5 3000",
-                reply_markup=main_kb
+                f"⚠️ Цена должна быть числом, получено: <code>{price_str}</code>\n"
+                f"Например: <code>Audi A5 3000</code>",
+                parse_mode="HTML",
+                reply_markup=back_kb()
             )
             return
 
         if price <= 0:
             await message.answer(
-                "Цена должна быть положительным числом.",
-                reply_markup=main_kb
+                "⚠️ Цена должна быть положительным числом.",
+                parse_mode="HTML",
+                reply_markup=back_kb()
             )
             return
 
@@ -159,7 +220,7 @@ async def calc(message: types.Message):
                 is_429 = "429" in error_str or "RESOURCE_EXHAUSTED" in error_str
 
                 if (is_503 or is_429) and attempt < MAX_RETRIES - 1:
-                    wait = (attempt + 1) * 5  # 5s, 10s, 15s
+                    wait = (attempt + 1) * 5
                     logger.warning(f"Gemini {type(e).__name__} (попытка {attempt+1}), жду {wait}с...")
                     await asyncio.sleep(wait)
                     continue
@@ -179,15 +240,18 @@ async def calc(message: types.Message):
                 f"━━━━━━━━━━━━━━\n"
                 f"✅ <b>Итого: {total:.2f} USD</b>"
             )
-            await message.answer(response_text, parse_mode="HTML", reply_markup=main_kb)
-        else:
-            await message.answer(response_text, reply_markup=main_kb)
+
+        await message.answer(
+            response_text,
+            parse_mode="HTML",
+            reply_markup=after_calc_kb()
+        )
 
     except Exception as e:
         logger.error(f"Ошибка в calc(): {type(e).__name__}: {e}", exc_info=True)
         await message.answer(
-            f"Произошла ошибка: {type(e).__name__}: {e}",
-            reply_markup=main_kb
+            f"❌ Произошла ошибка: {type(e).__name__}: {e}",
+            reply_markup=back_kb()
         )
 
 # --- Установка меню команд ---
