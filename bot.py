@@ -142,7 +142,8 @@ if __name__ == "__main__":
     main()
 
 
-"""import os
+"""
+import os
 import asyncio
 from threading import Thread
 from fastapi import FastAPI
@@ -179,9 +180,8 @@ main_kb = ReplyKeyboardMarkup(
 async def start(message: types.Message):
     await message.answer(
         """Вас приветствует Бот калькулятор!
-    
     Выберите команду из меню или введите модель и цену через пробел.
-    Например: AUDI 5000""",
+Например: AUDI 5000""",
         reply_markup=main_kb
     )
 
@@ -267,4 +267,3 @@ def main():
 if __name__ == "__main__":
     main()
 """
-  
