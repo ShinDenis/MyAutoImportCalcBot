@@ -189,10 +189,10 @@ main_kb = ReplyKeyboardMarkup(
 @dp.message(Command("start"))
 async def start(message: types.Message):
     await message.answer(
-        """Вас приветствует Бот калькулятор!
+    """Вас приветствует Бот калькулятор!
     Выберите команду из меню или введите модель и цену через пробел.
-Например: AUDI 5000""",
-        reply_markup=main_kb
+    Например: AUDI 5000""",
+    reply_markup=main_kb
     )
 
 
